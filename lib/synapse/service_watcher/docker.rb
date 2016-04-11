@@ -1,7 +1,7 @@
 require "synapse/service_watcher/base"
 require 'docker'
 
-module Synapse
+class Synapse::ServiceWatcher
   class DockerWatcher < BaseWatcher
     def start
       @check_interval = @discovery['check_interval'] || 15.0
@@ -23,16 +23,10 @@ module Synapse
     end
 
     def watch
-      last_containers = []
       until @should_exit
         begin
           start = Time.now
-          current_containers = containers
-          unless last_containers == current_containers
-            last_containers = current_containers
-            configure_backends(last_containers)
-          end
-
+          set_backends(containers)
           sleep_until_next_check(start)
         rescue Exception => e
           log.warn "synapse: error in watcher thread: #{e.inspect}"
@@ -80,10 +74,11 @@ module Synapse
         cnts.each do |cnt|
           cnt['Ports'] = rewrite_container_ports cnt['Ports']
         end
-        # Discover containers that match the image/port we're interested in
+        # Discover containers that match the image/port we're interested in and have the port mapped to the host
         cnts = cnts.find_all do |cnt|
           cnt["Image"].rpartition(":").first == @discovery["image_name"] \
-            and cnt["Ports"].has_key?(@discovery["container_port"].to_s())
+            and cnt["Ports"].has_key?(@discovery["container_port"].to_s()) \
+            and cnt["Ports"][@discovery["container_port"].to_s()].length > 0
         end
         cnts.map do |cnt|
           {
@@ -98,23 +93,5 @@ module Synapse
       log.warn "synapse: error while polling for containers: #{e.inspect}"
       []
     end
-
-    def configure_backends(new_backends)
-      if new_backends.empty?
-        if @default_servers.empty?
-          log.warn "synapse: no backends and no default servers for service #{@name};" \
-            " using previous backends: #{@backends.inspect}"
-        else
-          log.warn "synapse: no backends for service #{@name};" \
-            " using default servers: #{@default_servers.inspect}"
-          @backends = @default_servers
-        end
-      else
-        log.info "synapse: discovered #{new_backends.length} backends for service #{@name}"
-        set_backends(new_backends)
-      end
-      reconfigure!
-    end
-
   end
 end
